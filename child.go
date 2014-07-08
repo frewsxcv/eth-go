@@ -41,7 +41,6 @@ func (self *Child) GetBlock(hash []byte) *ethutil.Value {
 	if msg.Type != ethwire.MsgChildBlockTy {
 		panic(fmt.Sprintf("expected block, got %v", msg.Type))
 	}
-	fmt.Println("get block finished")
 
 	return msg.Data
 }

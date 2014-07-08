@@ -104,7 +104,7 @@ func CreateBlock(root interface{},
 	}
 	block.SetUncles([]*Block{})
 
-	block.state = NewState(ethtrie.NewTrie(ethutil.Config.Db, root))
+	block.state = NewState(ethtrie.NewTrie(ethutil.Config.Backend, root))
 
 	return block
 }
@@ -252,7 +252,7 @@ func (self *Block) SetReceipts(receipts []*Receipt, txs []*Transaction) {
 func (block *Block) setTransactions(txs []*Transaction) {
 	block.transactions = txs
 
-	trie := ethtrie.NewTrie(ethutil.Config.Db, "")
+	trie := ethtrie.NewTrie(ethutil.Config.Backend, "")
 	for i, tx := range txs {
 		trie.Update(strconv.Itoa(i), string(tx.RlpEncode()))
 	}
@@ -289,7 +289,7 @@ func (block *Block) RlpValueDecode(decoder *ethutil.Value) {
 	block.PrevHash = header.Get(0).Bytes()
 	block.UncleSha = header.Get(1).Bytes()
 	block.Coinbase = header.Get(2).Bytes()
-	block.state = NewState(ethtrie.NewTrie(ethutil.Config.Db, header.Get(3).Val))
+	block.state = NewState(ethtrie.NewTrie(ethutil.Config.Backend, header.Get(3).Val))
 	block.TxSha = header.Get(4).Bytes()
 	block.Difficulty = header.Get(5).BigInt()
 	block.Number = header.Get(6).BigInt()
@@ -331,7 +331,7 @@ func NewUncleBlockFromValue(header *ethutil.Value) *Block {
 	block.PrevHash = header.Get(0).Bytes()
 	block.UncleSha = header.Get(1).Bytes()
 	block.Coinbase = header.Get(2).Bytes()
-	block.state = NewState(ethtrie.NewTrie(ethutil.Config.Db, header.Get(3).Val))
+	block.state = NewState(ethtrie.NewTrie(ethutil.Config.Backend, header.Get(3).Val))
 	block.TxSha = header.Get(4).Bytes()
 	block.Difficulty = header.Get(5).BigInt()
 	block.Number = header.Get(6).BigInt()

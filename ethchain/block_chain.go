@@ -339,7 +339,7 @@ func (bc *BlockChain) Add(block *Block) {
 
 func (bc *BlockChain) GetBlock(hash []byte) *Block {
 	value := bc.backend.GetBlock(hash)
-	if value != nil {
+	if !value.IsNil() {
 		return NewBlockFromRlpValue(value)
 	}
 

@@ -46,7 +46,7 @@ func MakeContract(tx *Transaction, state *State) *StateObject {
 
 		contract := state.NewStateObject(addr)
 		contract.initScript = tx.Data
-		contract.state = NewState(ethtrie.NewTrie(ethutil.Config.Db, ""))
+		contract.state = NewState(ethtrie.NewTrie(ethutil.Config.Backend, ""))
 
 		return contract
 	}
@@ -56,14 +56,14 @@ func MakeContract(tx *Transaction, state *State) *StateObject {
 
 func NewStateObject(addr []byte) *StateObject {
 	object := &StateObject{address: addr, Amount: new(big.Int), gasPool: new(big.Int)}
-	object.state = NewState(ethtrie.NewTrie(ethutil.Config.Db, ""))
+	object.state = NewState(ethtrie.NewTrie(ethutil.Config.Backend, ""))
 
 	return object
 }
 
 func NewContract(address []byte, Amount *big.Int, root []byte) *StateObject {
 	contract := &StateObject{address: address, Amount: Amount, Nonce: 0}
-	contract.state = NewState(ethtrie.NewTrie(ethutil.Config.Db, string(root)))
+	contract.state = NewState(ethtrie.NewTrie(ethutil.Config.Backend, string(root)))
 
 	return contract
 }
@@ -248,11 +248,11 @@ func (c *StateObject) RlpDecode(data []byte) {
 
 	c.Nonce = decoder.Get(0).Uint()
 	c.Amount = decoder.Get(1).BigInt()
-	c.state = NewState(ethtrie.NewTrie(ethutil.Config.Db, decoder.Get(2).Interface()))
+	c.state = NewState(ethtrie.NewTrie(ethutil.Config.Backend, decoder.Get(2).Interface()))
 
 	c.ScriptHash = decoder.Get(3).Bytes()
 
-	c.script, _ = ethutil.Config.Db.Get(c.ScriptHash)
+	c.script = ethutil.Config.Backend.Get(c.ScriptHash).Bytes()
 }
 
 // Storage change object. Used by the manifest for notifying changes to

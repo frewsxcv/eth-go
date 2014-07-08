@@ -113,6 +113,8 @@ func New(db ethutil.Database, clientIdentity ethwire.ClientIdentity, keyManager 
 	ethereum.reactor = ethutil.NewReactorEngine()
 	ethereum.setupBackend()
 
+	ethutil.Config.Backend = ethereum.backend
+
 	return ethereum, nil
 }
 

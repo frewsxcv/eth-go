@@ -9,7 +9,8 @@ import (
 
 // Config struct
 type ConfigManager struct {
-	Db Database
+	Db      Database
+	Backend Backend
 
 	ExecPath string
 	Debug    bool

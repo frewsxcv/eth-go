@@ -10,7 +10,7 @@ import (
 )
 
 func ParanoiaCheck(t1 *Trie) (bool, *Trie) {
-	t2 := NewTrie(ethutil.Config.Db, "")
+	t2 := NewTrie(t1.cache.backend, "")
 
 	t1.NewIterator().Each(func(key string, v *ethutil.Value) {
 		t2.Update(key, v.Str())
@@ -50,13 +50,14 @@ func (n *Node) Copy() *Node {
 }
 
 type Cache struct {
-	nodes   map[string]*Node
-	db      ethutil.Database
+	nodes map[string]*Node
+	//db      ethutil.Database
+	backend ethutil.Backend
 	IsDirty bool
 }
 
-func NewCache(db ethutil.Database) *Cache {
-	return &Cache{db: db, nodes: make(map[string]*Node)}
+func NewCache(backend ethutil.Backend) *Cache {
+	return &Cache{backend: backend, nodes: make(map[string]*Node)}
 }
 
 func (cache *Cache) PutValue(v interface{}, force bool) interface{} {
@@ -86,9 +87,10 @@ func (cache *Cache) Get(key []byte) *ethutil.Value {
 	}
 
 	// Get the key of the database instead and cache it
-	data, _ := cache.db.Get(key)
+	//data, _ := cache.backend.Get(key)
 	// Create the cached value
-	value := ethutil.NewValueFromBytes(data)
+	//value := ethutil.NewValueFromBytes(data)
+	value := cache.backend.Get(key)
 	// Create caching node
 	cache.nodes[string(key)] = NewNode(key, value, false)
 
@@ -98,7 +100,7 @@ func (cache *Cache) Get(key []byte) *ethutil.Value {
 func (cache *Cache) Delete(key []byte) {
 	delete(cache.nodes, string(key))
 
-	cache.db.Delete(key)
+	cache.backend.Delete(key)
 }
 
 func (cache *Cache) Commit() {
@@ -109,7 +111,7 @@ func (cache *Cache) Commit() {
 
 	for key, node := range cache.nodes {
 		if node.Dirty {
-			cache.db.Put([]byte(key), node.Value.Encode())
+			cache.backend.Put([]byte(key), node.Value.Encode())
 			node.Dirty = false
 		}
 	}
@@ -156,12 +158,12 @@ func copyRoot(root interface{}) interface{} {
 	return prevRootCopy
 }
 
-func NewTrie(db ethutil.Database, Root interface{}) *Trie {
+func NewTrie(backend ethutil.Backend, Root interface{}) *Trie {
 	// Make absolute sure the root is copied
 	r := copyRoot(Root)
 	p := copyRoot(Root)
 
-	return &Trie{cache: NewCache(db), Root: r, prevRoot: p}
+	return &Trie{cache: NewCache(backend), Root: r, prevRoot: p}
 }
 
 /*
@@ -219,7 +221,7 @@ func (t *Trie) Cmp(trie *Trie) bool {
 
 // Returns a copy of this trie
 func (t *Trie) Copy() *Trie {
-	trie := NewTrie(t.cache.db, t.Root)
+	trie := NewTrie(t.cache.backend, t.Root)
 	for key, node := range t.cache.nodes {
 		trie.cache.nodes[key] = node.Copy()
 	}
