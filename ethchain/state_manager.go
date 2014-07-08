@@ -2,47 +2,19 @@ package ethchain
 
 import (
 	"bytes"
-	"container/list"
 	"fmt"
-	"github.com/ethereum/eth-go/ethcrypto"
 	"github.com/ethereum/eth-go/ethlog"
 	"github.com/ethereum/eth-go/ethtrie"
 	"github.com/ethereum/eth-go/ethutil"
 	"github.com/ethereum/eth-go/ethwire"
 	"math/big"
 	"sync"
-	"time"
 )
 
 var statelogger = ethlog.NewLogger("STATE")
 
 type BlockProcessor interface {
 	ProcessBlock(block *Block)
-}
-
-type Peer interface {
-	Inbound() bool
-	LastSend() time.Time
-	LastPong() int64
-	Host() []byte
-	Port() uint16
-	Version() string
-	PingTime() string
-	Connected() *int32
-}
-
-type EthManager interface {
-	StateManager() *StateManager
-	BlockChain() *BlockChain
-	TxPool() *TxPool
-	Broadcast(msgType ethwire.MsgType, data []interface{})
-	Reactor() *ethutil.ReactorEngine
-	PeerCount() int
-	IsMining() bool
-	IsListening() bool
-	Peers() *list.List
-	KeyManager() *ethcrypto.KeyManager
-	ClientIdentity() ethwire.ClientIdentity
 }
 
 type StateManager struct {

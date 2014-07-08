@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/ethereum/eth-go/ethchain"
 	"github.com/ethereum/eth-go/ethcrypto"
+	"github.com/ethereum/eth-go/ethdb"
 	"github.com/ethereum/eth-go/ethlog"
 	"github.com/ethereum/eth-go/ethrpc"
 	"github.com/ethereum/eth-go/ethutil"
@@ -78,6 +79,9 @@ type Ethereum struct {
 	keyManager *ethcrypto.KeyManager
 
 	clientIdentity ethwire.ClientIdentity
+
+	backend   ethutil.Backend
+	childMode bool
 }
 
 func New(db ethutil.Database, clientIdentity ethwire.ClientIdentity, keyManager *ethcrypto.KeyManager, caps Caps, usePnp bool) (*Ethereum, error) {
@@ -107,15 +111,28 @@ func New(db ethutil.Database, clientIdentity ethwire.ClientIdentity, keyManager 
 		clientIdentity: clientIdentity,
 	}
 	ethereum.reactor = ethutil.NewReactorEngine()
-
-	ethereum.txPool = ethchain.NewTxPool(ethereum)
-	ethereum.blockChain = ethchain.NewBlockChain(ethereum)
-	ethereum.stateManager = ethchain.NewStateManager(ethereum)
-
-	// Start the tx pool
-	ethereum.txPool.Start()
+	ethereum.setupBackend()
 
 	return ethereum, nil
+}
+
+func (self *Ethereum) setupBackend() {
+	var err error
+
+	self.backend, err = NewChild(self, "localhost:33333")
+	if err != nil {
+		ethlogger.Debugln(err)
+
+		ethlogger.Infoln("Parent mode")
+
+		self.backend = ethdb.NewDbBackend(ethutil.Config.Db)
+	} else {
+		ethlogger.Infoln("Child mode")
+	}
+
+	if _, self.childMode = self.backend.(*Child); self.childMode {
+		self.backend.(*Child).Start()
+	}
 }
 
 func (s *Ethereum) Reactor() *ethutil.ReactorEngine {
@@ -151,6 +168,10 @@ func (s *Ethereum) IsMining() bool {
 func (s *Ethereum) PeerCount() int {
 	return s.peers.Len()
 }
+func (s *Ethereum) Backend() ethutil.Backend {
+	return s.backend
+}
+
 func (s *Ethereum) IsUpToDate() bool {
 	upToDate := true
 	eachPeer(s.peers, func(peer *Peer, e *list.Element) {
@@ -178,6 +199,15 @@ func (s *Ethereum) AddPeer(conn net.Conn) {
 		} else {
 			ethlogger.Debugf("Max connected peers reached. Not adding incoming peer.")
 		}
+	}
+}
+
+func (s *Ethereum) AddChild(conn net.Conn) {
+	peer := NewPeer(conn, s, true)
+	peer.isChild = true
+
+	if peer != nil {
+		peer.Start()
 	}
 }
 
@@ -350,17 +380,40 @@ func (s *Ethereum) ReapDeadPeerHandler() {
 
 // Start the ethereum
 func (s *Ethereum) Start(seed bool) {
-	// Bind to addr and port
-	ln, err := net.Listen("tcp", ":"+s.Port)
-	if err != nil {
-		ethlogger.Warnf("Port %s in use. Connection listening disabled. Acting as client", s.Port)
-		s.listening = false
+	s.txPool = ethchain.NewTxPool(s)
+	s.blockChain = ethchain.NewBlockChain(s)
+	s.stateManager = ethchain.NewStateManager(s)
+
+	// Start the tx pool
+	s.txPool.Start()
+
+	if !s.childMode {
+		// Bind to addr and port
+		ln, err := net.Listen("tcp", ":"+s.Port)
+		if err != nil {
+			ethlogger.Warnf("Port %s in use. Connection listening disabled. Acting as client", s.Port)
+			s.listening = false
+		} else {
+			s.listening = true
+			// Starting accepting connections
+			ethlogger.Infoln("Ready and accepting connections")
+			// Start the peer handler
+			go s.peerHandler(ln)
+		}
+
+		ln, err = net.Listen("tcp", ":33333")
+		if err != nil {
+			ethlogger.Warnf("Child connection set up failed %v\n", err)
+		} else {
+			ethlogger.Infoln("Parent ready and accepting children")
+			go s.childHandler(ln)
+		}
 	} else {
-		s.listening = true
-		// Starting accepting connections
-		ethlogger.Infoln("Ready and accepting connections")
-		// Start the peer handler
-		go s.peerHandler(ln)
+		/*
+			t := ethutil.Hex2Bytes("b22ed393e19dd489146061a5e8d8641ae3fcda6250186fc878d34b1c6ea075a0")
+			o := s.backend.GetBlock(t)
+			fmt.Println(o)
+		*/
 	}
 
 	if s.nat != nil {
@@ -370,7 +423,7 @@ func (s *Ethereum) Start(seed bool) {
 	// Start the reaping processes
 	go s.ReapDeadPeerHandler()
 
-	if seed {
+	if seed && !s.childMode {
 		s.Seed()
 	}
 	ethlogger.Infoln("Server started")
@@ -444,6 +497,18 @@ func (s *Ethereum) peerHandler(listener net.Listener) {
 		}
 
 		go s.AddPeer(conn)
+	}
+}
+
+func (s *Ethereum) childHandler(listener net.Listener) {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			ethlogger.Debugln(err)
+			continue
+		}
+
+		go s.AddChild(conn)
 	}
 }
 

@@ -22,12 +22,15 @@ type BlockChain struct {
 
 	CurrentBlock  *Block
 	LastBlockHash []byte
+
+	backend ethutil.Backend
 }
 
 func NewBlockChain(ethereum EthManager) *BlockChain {
 	bc := &BlockChain{}
 	bc.genesisBlock = NewBlockFromBytes(ethutil.Encode(Genesis))
 	bc.Ethereum = ethereum
+	bc.backend = ethereum.Backend()
 
 	bc.setLastBlock()
 
@@ -83,8 +86,8 @@ func (bc *BlockChain) NewBlock(coinbase []byte) *Block {
 }
 
 func (bc *BlockChain) HasBlock(hash []byte) bool {
-	data, _ := ethutil.Config.Db.Get(hash)
-	return len(data) != 0
+	data := bc.backend.Get(hash)
+	return !data.IsNil()
 }
 
 // TODO: At one point we might want to save a block by prevHash in the db to optimise this...
@@ -183,7 +186,8 @@ func (bc *BlockChain) ResetTillBlockHash(hash []byte) error {
 	}
 
 	// Manually reset the last sync block
-	err := ethutil.Config.Db.Delete(lastBlock.Hash())
+	//err := ethutil.Config.Db.Delete(lastBlock.Hash())
+	err := bc.backend.Delete(lastBlock.Hash())
 	if err != nil {
 		return err
 	}
@@ -194,7 +198,8 @@ func (bc *BlockChain) ResetTillBlockHash(hash []byte) error {
 			chainlogger.Infoln("We have arrived at the the common parent block, breaking")
 			break
 		}
-		err = ethutil.Config.Db.Delete(block.Hash())
+		//err = ethutil.Config.Db.Delete(block.Hash())
+		err = bc.backend.Delete(block.Hash())
 		if err != nil {
 			return err
 		}
@@ -267,7 +272,7 @@ func (bc *BlockChain) GetChain(hash []byte, amount int) []*Block {
 	return blocks
 }
 
-func AddTestNetFunds(block *Block) {
+func AddPreMineFunds(block *Block) {
 	for _, addr := range []string{
 		"51ba59315b3a95761d0863b05ccc7a7f54703d99",
 		"e4157b34ea9615cfbde6b4fda419828124b70c78",
@@ -286,56 +291,59 @@ func AddTestNetFunds(block *Block) {
 }
 
 func (bc *BlockChain) setLastBlock() {
-	data, _ := ethutil.Config.Db.Get([]byte("LastBlock"))
-	if len(data) != 0 {
-		block := NewBlockFromBytes(data)
-		//info := bc.BlockInfo(block)
+	data := bc.backend.Get([]byte("LastBlock"))
+	//data, _ := ethutil.Config.Db.Get([]byte("LastBlock"))
+	if !data.IsNil() {
+		block := NewBlockFromRlpValue(data)
 		bc.CurrentBlock = block
 		bc.LastBlockHash = block.Hash()
 		bc.LastBlockNumber = block.Number.Uint64()
 
 	} else {
-		AddTestNetFunds(bc.genesisBlock)
-
+		// Add the pre-mine
+		AddPreMineFunds(bc.genesisBlock)
 		bc.genesisBlock.state.trie.Sync()
-		// Prepare the genesis block
 		bc.Add(bc.genesisBlock)
-
-		//chainlogger.Infof("root %x\n", bm.bc.genesisBlock.State().Root)
-		//bm.bc.genesisBlock.PrintHash()
 	}
 
 	// Set the last know difficulty (might be 0x0 as initial value, Genesis)
-	bc.TD = ethutil.BigD(ethutil.Config.Db.LastKnownTD())
+	//bc.TD = ethutil.BigD(ethutil.Config.Db.LastKnownTD())
+	b := bc.backend.Get([]byte("LastKnownTotalDifficulty")).Bytes()
+	if len(b) == 0 {
+		b = []byte{0x0}
+	}
+	bc.TD = ethutil.BigD(b)
 
 	chainlogger.Infof("Last block (#%d) %x\n", bc.LastBlockNumber, bc.CurrentBlock.Hash())
 }
 
 func (bc *BlockChain) SetTotalDifficulty(td *big.Int) {
-	ethutil.Config.Db.Put([]byte("LastKnownTotalDifficulty"), td.Bytes())
+	//ethutil.Config.Db.Put([]byte("LastKnownTotalDifficulty"), td.Bytes())
+	bc.backend.Put([]byte("LastKnownTotalDifficulty"), td.Bytes())
 	bc.TD = td
 }
 
 // Add a block to the chain and record addition information
 func (bc *BlockChain) Add(block *Block) {
 	bc.writeBlockInfo(block)
-	// Prepare the genesis block
 
 	bc.CurrentBlock = block
 	bc.LastBlockHash = block.Hash()
 
 	encodedBlock := block.RlpEncode()
-	ethutil.Config.Db.Put(block.Hash(), encodedBlock)
-	ethutil.Config.Db.Put([]byte("LastBlock"), encodedBlock)
+	//ethutil.Config.Db.Put(block.Hash(), encodedBlock)
+	//ethutil.Config.Db.Put([]byte("LastBlock"), encodedBlock)
+	bc.backend.Put(block.Hash(), encodedBlock)
+	bc.backend.Put([]byte("LastBlock"), encodedBlock)
 }
 
 func (bc *BlockChain) GetBlock(hash []byte) *Block {
-	data, _ := ethutil.Config.Db.Get(hash)
-	if len(data) == 0 {
-		return nil
+	value := bc.backend.GetBlock(hash)
+	if value != nil {
+		return NewBlockFromRlpValue(value)
 	}
 
-	return NewBlockFromBytes(data)
+	return nil
 }
 
 func (bc *BlockChain) BlockInfoByHash(hash []byte) BlockInfo {

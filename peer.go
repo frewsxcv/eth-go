@@ -145,6 +145,10 @@ type Peer struct {
 	pingStartTime time.Time
 
 	lastRequestedBlock *ethchain.Block
+
+	// Flag indicates certain messages shouldn't be passed
+	isChild    bool
+	childQueue chan *ethwire.Msg
 }
 
 func NewPeer(conn net.Conn, ethereum *Ethereum, inbound bool) *Peer {
@@ -333,7 +337,7 @@ func (p *Peer) HandleInbound() {
 				// Version message
 				p.handleHandshake(msg)
 
-				if p.caps.IsCap(CapPeerDiscTy) {
+				if p.caps.IsCap(CapPeerDiscTy) && !p.ethereum.childMode {
 					p.QueueMessage(ethwire.NewMessage(ethwire.MsgGetPeersTy, ""))
 				}
 			case ethwire.MsgDiscTy:
@@ -537,9 +541,21 @@ func (p *Peer) HandleInbound() {
 				// Broadcast it back to the peer
 				p.QueueMessage(ethwire.NewMessage(ethwire.MsgTxTy, txsInterface))
 
-				// Unofficial but fun nonetheless
-			case ethwire.MsgTalkTy:
-				peerlogger.Infoln("%v says: %s\n", p.conn.RemoteAddr(), msg.Data.Str())
+			case ethwire.MsgChildGetBlockTy:
+				block := p.ethereum.BlockChain().GetBlock(msg.Data.Get(0).Bytes())
+				var data []interface{}
+				if block != nil {
+					data = []interface{}{block.Value().Raw()}
+				}
+
+				p.QueueMessage(ethwire.NewMessage(ethwire.MsgChildBlockTy, data))
+			case ethwire.MsgChildGetHashTy:
+				value := p.ethereum.Backend().Get(msg.Data.Get(0).Bytes())
+				p.QueueMessage(ethwire.NewMessage(ethwire.MsgChildHashTy, []interface{}{value.Raw()}))
+			default:
+				if p.childQueue != nil {
+					p.childQueue <- msg
+				}
 			}
 		}
 	}
@@ -690,7 +706,10 @@ func (p *Peer) handleHandshake(msg *ethwire.Msg) {
 		peerlogger.Debugln("Already syncing up with a peer; sleeping")
 		time.Sleep(10 * time.Second)
 	}
-	p.SyncWithPeerToLastKnown()
+
+	if p.caps.IsCap(CapChainTy) && !p.ethereum.childMode {
+		p.SyncWithPeerToLastKnown()
+	}
 
 	peerlogger.Debugln(p)
 }
