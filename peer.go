@@ -221,7 +221,6 @@ func (self *Peer) Connect(addr string) (conn net.Conn, err error) {
 	for attempts := 0; attempts < maxTries; attempts++ {
 		conn, err = net.DialTimeout("tcp", addr, 10*time.Second)
 		if err != nil {
-			//peerlogger.Debugf("Peer connection failed. Retrying (%d/%d) (%s)\n", attempts+1, maxTries, addr)
 			time.Sleep(time.Duration(attempts*20) * time.Second)
 			continue
 		}
@@ -812,6 +811,10 @@ func (self *Peer) IsCap(cap string) bool {
 	}
 
 	return false
+}
+
+func (self *Peer) Caps() *ethutil.Value {
+	return self.protocolCaps
 }
 
 func (p *Peer) String() string {
