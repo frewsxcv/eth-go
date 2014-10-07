@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/eth-go/ethstate"
 	"github.com/ethereum/eth-go/ethutil"
 	"github.com/ethereum/eth-go/ethwire"
+	"github.com/ethereum/eth-go/eventer"
 )
 
 const (
@@ -58,13 +59,17 @@ type Ethereum struct {
 	blockChain *ethchain.BlockChain
 	// The block pool
 	blockPool *BlockPool
-	// Peers (NYI)
+	// Eventer
+	eventer *eventer.EventMachine
+	// Peers
 	peers *list.List
 	// Nonce
 	Nonce uint64
 
 	Addr net.Addr
 	Port string
+
+	blacklist [][]byte
 
 	peerMut sync.Mutex
 
@@ -123,6 +128,7 @@ func New(db ethutil.Database, clientIdentity ethwire.ClientIdentity, keyManager 
 		filters:        make(map[int]*ethchain.Filter),
 	}
 	ethereum.reactor = ethreact.New()
+	ethereum.eventer = eventer.New()
 
 	ethereum.blockPool = NewBlockPool(ethereum)
 	ethereum.txPool = ethchain.NewTxPool(ethereum)
@@ -160,6 +166,9 @@ func (s *Ethereum) TxPool() *ethchain.TxPool {
 }
 func (s *Ethereum) BlockPool() *BlockPool {
 	return s.blockPool
+}
+func (s *Ethereum) Eventer() *eventer.EventMachine {
+	return s.eventer
 }
 func (self *Ethereum) Db() ethutil.Database {
 	return self.db
@@ -202,6 +211,10 @@ func (s *Ethereum) HighestTDPeer() (td *big.Int) {
 	})
 
 	return
+}
+
+func (self *Ethereum) BlacklistPeer(peer *Peer) {
+	self.blacklist = append(self.blacklist, peer.pubkey)
 }
 
 func (s *Ethereum) AddPeer(conn net.Conn) {
@@ -387,6 +400,8 @@ func (s *Ethereum) ReapDeadPeerHandler() {
 func (s *Ethereum) Start(seed bool) {
 	s.reactor.Start()
 	s.blockPool.Start()
+	s.stateManager.Start()
+
 	// Bind to addr and port
 	ln, err := net.Listen("tcp", ":"+s.Port)
 	if err != nil {

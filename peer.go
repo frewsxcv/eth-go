@@ -39,15 +39,15 @@ const (
 	// Values are given explicitly instead of by iota because these values are
 	// defined by the wire protocol spec; it is easier for humans to ensure
 	// correctness when values are explicit.
-	DiscReRequested  = 0x00
-	DiscReTcpSysErr  = 0x01
-	DiscBadProto     = 0x02
-	DiscBadPeer      = 0x03
-	DiscTooManyPeers = 0x04
-	DiscConnDup      = 0x05
-	DiscGenesisErr   = 0x06
-	DiscProtoErr     = 0x07
-	DiscQuitting     = 0x08
+	DiscRequested DiscReason = iota
+	DiscReTcpSysErr
+	DiscBadProto
+	DiscBadPeer
+	DiscTooManyPeers
+	DiscConnDup
+	DiscGenesisErr
+	DiscProtoErr
+	DiscQuitting
 )
 
 var discReasonToString = []string{
@@ -129,9 +129,9 @@ type Peer struct {
 	statusKnown  bool
 
 	// Last received pong message
-	lastPong          int64
-	lastBlockReceived time.Time
-	LastHashReceived  time.Time
+	lastPong           int64
+	lastBlockReceived  time.Time
+	doneFetchingHashes bool
 
 	host             []byte
 	port             uint16
@@ -164,43 +164,45 @@ func NewPeer(conn net.Conn, ethereum *Ethereum, inbound bool) *Peer {
 	pubkey := ethereum.KeyManager().PublicKey()[1:]
 
 	return &Peer{
-		outputQueue:     make(chan *ethwire.Msg, outputBufferSize),
-		quit:            make(chan bool),
-		ethereum:        ethereum,
-		conn:            conn,
-		inbound:         inbound,
-		disconnect:      0,
-		connected:       1,
-		port:            30303,
-		pubkey:          pubkey,
-		blocksRequested: 10,
-		caps:            ethereum.ServerCaps(),
-		version:         ethereum.ClientIdentity().String(),
-		protocolCaps:    ethutil.NewValue(nil),
-		td:              big.NewInt(0),
+		outputQueue:        make(chan *ethwire.Msg, outputBufferSize),
+		quit:               make(chan bool),
+		ethereum:           ethereum,
+		conn:               conn,
+		inbound:            inbound,
+		disconnect:         0,
+		connected:          1,
+		port:               30303,
+		pubkey:             pubkey,
+		blocksRequested:    10,
+		caps:               ethereum.ServerCaps(),
+		version:            ethereum.ClientIdentity().String(),
+		protocolCaps:       ethutil.NewValue(nil),
+		td:                 big.NewInt(0),
+		doneFetchingHashes: true,
 	}
 }
 
 func NewOutboundPeer(addr string, ethereum *Ethereum, caps Caps) *Peer {
 	p := &Peer{
-		outputQueue:  make(chan *ethwire.Msg, outputBufferSize),
-		quit:         make(chan bool),
-		ethereum:     ethereum,
-		inbound:      false,
-		connected:    0,
-		disconnect:   0,
-		port:         30303,
-		caps:         caps,
-		version:      ethereum.ClientIdentity().String(),
-		protocolCaps: ethutil.NewValue(nil),
-		td:           big.NewInt(0),
+		outputQueue:        make(chan *ethwire.Msg, outputBufferSize),
+		quit:               make(chan bool),
+		ethereum:           ethereum,
+		inbound:            false,
+		connected:          0,
+		disconnect:         0,
+		port:               30303,
+		caps:               caps,
+		version:            ethereum.ClientIdentity().String(),
+		protocolCaps:       ethutil.NewValue(nil),
+		td:                 big.NewInt(0),
+		doneFetchingHashes: true,
 	}
 
 	// Set up the connection in another goroutine so we don't block the main thread
 	go func() {
 		conn, err := p.Connect(addr)
 		if err != nil {
-			peerlogger.Debugln("Connection to peer failed. Giving up.", err)
+			//peerlogger.Debugln("Connection to peer failed. Giving up.", err)
 			p.Stop()
 			return
 		}
@@ -314,14 +316,14 @@ func (p *Peer) HandleOutbound() {
 
 out:
 	for {
+	skip:
 		select {
 		// Main message queue. All outbound messages are processed through here
 		case msg := <-p.outputQueue:
 			if !p.statusKnown {
 				switch msg.Type {
-				case ethwire.MsgGetTxsTy, ethwire.MsgGetBlockHashesTy, ethwire.MsgGetBlocksTy, ethwire.MsgBlockHashesTy, ethwire.MsgBlockTy:
-					peerlogger.Debugln("Blocked outgoing [eth] message to peer without the [eth] cap.")
-					break
+				case ethwire.MsgGetTxsTy, ethwire.MsgTxTy, ethwire.MsgGetBlockHashesTy, ethwire.MsgBlockHashesTy, ethwire.MsgGetBlocksTy, ethwire.MsgBlockTy:
+					break skip
 				}
 			}
 
@@ -344,7 +346,6 @@ out:
 		// Service timer takes care of peer broadcasting, transaction
 		// posting or block posting
 		case <-serviceTimer.C:
-
 			p.QueueMessage(ethwire.NewMessage(ethwire.MsgGetPeersTy, ""))
 
 		case <-p.quit:
@@ -504,9 +505,7 @@ func (p *Peer) HandleInbound() {
 					it := msg.Data.NewIterator()
 					for it.Next() {
 						hash := it.Value().Bytes()
-
 						p.lastReceivedHash = hash
-						p.LastHashReceived = time.Now()
 
 						if blockPool.HasCommonHash(hash) {
 							foundCommonHash = true
@@ -518,7 +517,12 @@ func (p *Peer) HandleInbound() {
 					}
 
 					if !foundCommonHash && msg.Data.Len() != 0 {
-						p.FetchHashes()
+						if !p.FetchHashes() {
+							p.doneFetchingHashes = true
+						}
+					} else {
+						peerlogger.Infof("Found common hash (%x...)\n", p.lastReceivedHash[0:4])
+						p.doneFetchingHashes = true
 					}
 
 				case ethwire.MsgBlockTy:
@@ -531,7 +535,7 @@ func (p *Peer) HandleInbound() {
 						block := ethchain.NewBlockFromRlpValue(it.Value())
 						//fmt.Printf("%v %x - %x\n", block.Number, block.Hash()[0:4], block.PrevHash[0:4])
 
-						blockPool.SetBlock(block, p)
+						blockPool.Add(block, p)
 
 						p.lastBlockReceived = time.Now()
 					}
@@ -545,24 +549,33 @@ func (p *Peer) HandleInbound() {
 
 func (self *Peer) FetchBlocks(hashes [][]byte) {
 	if len(hashes) > 0 {
+		peerlogger.Debugf("Fetching blocks (%d)\n", len(hashes))
+
 		self.QueueMessage(ethwire.NewMessage(ethwire.MsgGetBlocksTy, ethutil.ByteSliceToInterface(hashes)))
 	}
 }
 
-func (self *Peer) FetchHashes() {
+func (self *Peer) FetchHashes() bool {
 	blockPool := self.ethereum.blockPool
+	return blockPool.FetchHashes(self)
 
-	if self.td.Cmp(self.ethereum.HighestTDPeer()) >= 0 {
-		blockPool.td = self.td
+	/*
+		if self.td.Cmp(self.ethereum.HighestTDPeer()) >= 0 {
+			blockPool.td = self.td
 
-		if !blockPool.HasLatestHash() {
-			self.QueueMessage(ethwire.NewMessage(ethwire.MsgGetBlockHashesTy, []interface{}{self.lastReceivedHash, uint32(256)}))
+			if !blockPool.HasLatestHash() {
+				self.doneFetchingHashes = false
+
+				const amount = 256
+				peerlogger.Debugf("Fetching hashes (%d)\n", amount)
+				self.QueueMessage(ethwire.NewMessage(ethwire.MsgGetBlockHashesTy, []interface{}{self.lastReceivedHash, uint32(amount)}))
+			}
 		}
-	}
+	*/
 }
 
 func (self *Peer) FetchingHashes() bool {
-	return time.Since(self.LastHashReceived) < 5*time.Second
+	return !self.doneFetchingHashes
 }
 
 // General update method
@@ -576,10 +589,9 @@ out:
 			if self.IsCap("eth") {
 				var (
 					sinceBlock = time.Since(self.lastBlockReceived)
-					sinceHash  = time.Since(self.LastHashReceived)
 				)
 
-				if sinceBlock > 5*time.Second && sinceHash > 5*time.Second {
+				if sinceBlock > 5*time.Second {
 					self.catchingUp = false
 				}
 			}
@@ -624,18 +636,22 @@ func (p *Peer) Start() {
 }
 
 func (p *Peer) Stop() {
+	p.StopWithReason(DiscRequested)
+}
+
+func (p *Peer) StopWithReason(reason DiscReason) {
 	if atomic.AddInt32(&p.disconnect, 1) != 1 {
 		return
 	}
 
-	close(p.quit)
-	if atomic.LoadInt32(&p.connected) != 0 {
-		p.writeMessage(ethwire.NewMessage(ethwire.MsgDiscTy, ""))
-		p.conn.Close()
-	}
-
 	// Pre-emptively remove the peer; don't wait for reaping. We already know it's dead if we are here
 	p.ethereum.RemovePeer(p)
+
+	close(p.quit)
+	if atomic.LoadInt32(&p.connected) != 0 {
+		p.writeMessage(ethwire.NewMessage(ethwire.MsgDiscTy, reason))
+		p.conn.Close()
+	}
 }
 
 func (p *Peer) peersMessage() *ethwire.Msg {
@@ -704,10 +720,7 @@ func (self *Peer) handleStatus(msg *ethwire.Msg) {
 
 	// Compare the total TD with the blockchain TD. If remote is higher
 	// fetch hashes from highest TD node.
-	if self.td.Cmp(self.ethereum.BlockChain().TD) > 0 {
-		self.ethereum.blockPool.AddHash(self.lastReceivedHash, self)
-		self.FetchHashes()
-	}
+	self.FetchHashes()
 
 	ethlogger.Infof("Peer is [eth] capable. (TD = %v ~ %x) %d / %d", self.td, self.bestHash, protoVersion, netVersion)
 
@@ -755,6 +768,16 @@ func (p *Peer) handleHandshake(msg *ethwire.Msg) {
 		p.Stop()
 
 		return
+	}
+
+	// Check for blacklisting
+	for _, pk := range p.ethereum.blacklist {
+		if bytes.Compare(pk, pub) == 0 {
+			peerlogger.Debugf("Blacklisted peer tried to connect (%x...)\n", pubkey[0:4])
+			p.StopWithReason(DiscBadPeer)
+
+			return
+		}
 	}
 
 	usedPub := 0
