@@ -25,6 +25,21 @@ func Compile(script string, silent bool) (ret []byte, err error) {
 				}
 
 				return byteCode, nil
+            case "#!hex":
+		        hex := strings.Split(script, "\n")[1]
+                byteCode := make([]byte, len(hex) / 2)
+                var top uint8
+                var bottom uint8
+                for i := 0; i < len(hex) / 2; i++ {
+                    if hex[i*2] >= 96 {
+                         top = hex[i*2] - 87 
+                    } else { top = hex[i*2] - 48 }
+                    if hex[i*2+1] >= 96 { 
+                         bottom = hex[i*2+1] - 87
+                    } else { bottom = hex[i*2+1] - 48 }
+                    byteCode[i] = (top * 16 + bottom)
+                }
+                return byteCode, nil
 			}
 		} else {
 
