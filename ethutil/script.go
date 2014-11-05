@@ -8,7 +8,7 @@ import (
 
 	"github.com/obscuren/mutan"
 	"github.com/obscuren/mutan/backends"
-	"github.com/obscuren/serpent-go"
+	"github.com/ethereum/serpent-go"
 )
 
 // General compile function

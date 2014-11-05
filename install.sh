@@ -27,7 +27,7 @@ if [ $? != 0 ]; then
 fi
 
 echo "serpent-go"
-cd $GOPATH/src/github.com/obscuren/serpent-go
+cd $GOPATH/src/github.com/ethereum/serpent-go
 
 echo "init submodule"
 git submodule init
